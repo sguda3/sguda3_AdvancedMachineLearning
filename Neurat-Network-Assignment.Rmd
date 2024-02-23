@@ -1,0 +1,234 @@
+---
+title: "Neural Network"
+output:
+  html_document: default
+---
+
+# Deep Learning
+
+Deep Learning is the subfield of the Machine learning in which data trained using the artificial neurons that work on the same principle as that of the Human neurons. This field is being popular due to the availability of large amount of data. Because it works on the artificial neural networks and doesn't required the large coding to build the models.
+
+In Deep learning, data is fed to the model which process it and generates the output as prediction on the basis of the new data.
+
+# Neural Network
+
+Neural network is the model build in the deep learning. It's working principle is the same as that same as that of neurons in Human brain. In the neural network, artificial neurons are built using the nodes and layers. Each layer presents a layer of neuron and each node in the layer represents the neuron. It consists of three types of layers input layer, Middle layers and output layers.
+
+Data is taken as input from the input layer and after processing forward to the middle layers. Middle layer neurons after processing pass the generated output through a function which generates the prediction.
+
+# Data Processing
+
+For Neural Network Model building, Following libraries are required.
+
+```{r}
+library(tensorflow)
+library(keras)
+library(tidyverse)
+```
+
+```{r}
+# Load the IMDb dataset
+imdb <- dataset_imdb(num_words = 10000)
+# Extract training and testing data along with labels
+train_data <- imdb$train$x
+train_labels <- imdb$train$y
+test_data <- imdb$test$x
+test_labels <- imdb$test$y
+
+# Inspecting a sample training data and label
+cat("Sample Training Data:\n")
+print(train_data[[1]])
+cat("\nSample Training Label:", train_labels[1], "\n")
+```
+
+This code is about loading and exploring the IMDb movie reviews dataset, specifically looking at the format of a sample training data point, its label, and finding the maximum word index in the entire dataset.
+
+```{r}
+# Finding the maximum index in the dataset
+max_index <- max(sapply(train_data, function(sequence) max(sequence)))
+cat("Maximum Index in the Dataset:", max_index, "\n")
+
+
+# Get the word index from the IMDb dataset
+word_index <- dataset_imdb_word_index()
+```
+
+The **`dataset_imdb_word_index`** function is used to get the word index, and the logic for creating the reverse word index and decoding the review is translated accordingly. Note that the special token handling may vary based on the actual structure of the IMDb dataset in R's Keras library.
+
+```{r}
+# Create a reverse word index (mapping index to word)
+reverse_word_index <- setNames(names(word_index), as.numeric(word_index))
+# Decode the first training data point into human-readable text
+decoded_review <- paste(sapply(train_data[[1]], function(i) ifelse((i - 3) %in% names(reverse_word_index), reverse_word_index[[i - 3]], "?")), collapse = " ")
+```
+
+```{r}
+
+# Function to vectorize sequences
+vectorize_sequences <- function(sequences, dimension = 10000) {
+  # Create a matrix of zeros with dimensions (length(sequences), dimension)
+  results <- matrix(0, nrow = length(sequences), ncol = dimension)
+  
+  # Iterate through each sequence in the input sequences
+  for (i in seq_along(sequences)) {
+    # Set the corresponding elements in the row to 1
+    results[i, sequences[[i]]] <- 1
+  }
+  
+  # Return the resulting binary matrix
+  return(results)
+}
+
+# Apply the vectorization function to the training and test data
+x_train <- vectorize_sequences(train_data)
+x_test <- vectorize_sequences(test_data)
+```
+
+The **`matrix`** function is used to create a matrix of zeros, and the **`seq_along`** function is used to iterate through the sequences. The logic for setting elements to 1 is adapted accordingly.
+
+```{r}
+# Accessing the first row of the binary matrix x_train
+x_train[1, ]
+
+# Convert train_labels and test_labels to matrices and cast to numeric
+y_train <- matrix(as.numeric(train_labels), ncol = 1)
+y_test <- matrix(as.numeric(test_labels), ncol = 1)
+
+```
+
+This code is preparing the target labels for training and testing data. It converts the labels to a NumPy array and then casts the array elements to the "float32" data type.
+
+# Model Building
+
+Now the Neural Network is going to built using the keras package that generates the neurons based on the required units and Layers.
+
+First the model is built using the 32 Units and 4 middle layers.
+
+```{r}
+embedding_dim <- 32
+max_features <- 10000
+model <- keras_model_sequential() %>%
+  layer_embedding(max_features + 1, embedding_dim) %>%
+  layer_dropout(0.2) %>%
+  layer_global_average_pooling_1d() %>%
+  layer_dropout(0.2) %>%
+  layer_dense(1)
+```
+
+Second model is built using the 64 units and 4 middle layers.
+
+```{r}
+embedding_dim <- 64
+max_features <- 10000
+model64 <- keras_model_sequential() %>%
+  layer_embedding(max_features + 1, embedding_dim) %>%
+  layer_dropout(0.2) %>%
+  layer_global_average_pooling_1d() %>%
+  layer_dropout(0.2) %>%
+  layer_dense(1)
+```
+
+Model has been trained using the Keras_sequential function
+
+```{r}
+cat("Summary of the model", summary(model), "\n")
+cat("Summary of the second model", summary(model64), "\n")
+```
+
+Now before prediction and evaluation it is good to proceed for the compilation of the model.
+
+# Compiling and Training
+
+```{r}
+model %>% compile(
+  optimizer = 'adam',
+  loss = 'mse',
+  metrics = c('accuracy')
+)
+```
+
+```{r}
+model64 %>% compile(
+  optimizer = 'adam',
+  loss = 'mse',
+  metrics = c('accuracy')
+)
+```
+
+model is being compiled using the mse method instead of binary_crossentropy.
+
+For training first distribute the data into training data.
+
+```{r}
+# Set aside a validation set from the training data
+x_val <- x_train[1:10000, ]
+partial_x_train <- x_train[10001:nrow(x_train), ]
+y_val <- y_train[1:10000, ]
+partial_y_train <- y_train[10001:nrow(y_train), ]
+```
+
+Now these da
+
+```{r}
+epochs <- 5
+history <- model %>% 
+  fit(
+    partial_x_train,partial_y_train,
+    validation_data = list(x_val,y_val),
+    epochs = epochs
+  )
+history_dict <- history$metrics$metrics
+```
+
+```{r}
+epochs <- 5
+history <- model64 %>% 
+  fit(
+    partial_x_train,partial_y_train,
+    validation_data = list(x_val,y_val),
+    epochs = epochs
+  )
+history_dict <- history$metrics$metrics
+```
+
+Here we used the train data for model training along with the validation data to chek the model performance using the epochs visualization.
+
+# Prediction
+
+Now,generating predictions on new data (**`x_test`**) using a trained neural network model.
+
+```{r}
+# Generate predictions on new data (x_test)
+predictions <- model %>% predict(x_test)
+head(predictions)
+# Generate predictions on new data (x_test)
+predictions <- model64 %>% predict(x_test)
+head(predictions)
+```
+
+# Visualization
+
+Now the whole visualization of the accuracy and the loss of accuracy is done to check the model performance.
+
+```{r}
+# Plotting Training and Validation Loss
+plot(history$metrics$loss, type = "o", col = "blue", pch = 16, ylim = c(0, max(c(history$metrics$loss, history$metrics$val_loss))), xlab = "Epochs", ylab = "Loss", main = "Training and Validation Loss")
+lines(history$metrics$val_loss, col = "blue", type = "l", lty = 2)
+legend("topright", legend = c("Training loss", "Validation loss"), col = c("blue", "blue"), pch = c(16, NA), lty = c(1, 2))
+
+```
+
+```{r}
+# Plotting Training and Validation Accuracy
+plot(history$metrics$accuracy, type = "o", col = "blue", pch = 16, ylim = c(0, 1), xlab = "Epochs", ylab = "Accuracy", main = "Training and Validation Accuracy")
+lines(history$metrics$val_accuracy, col = "blue", type = "l", lty = 2)
+legend("topright", legend = c("Training acc", "Validation acc"), col = c("blue", "blue"), pch = c(16, NA), lty = c(1, 2))
+```
+
+# Conclusion
+
+Deep Learning is the most popular field in the field of Data Science and Artificial intelligence which plays a great role in all the aspects of the daily life. Here the data from he IMDB is used to classify the text on the basis of different possibilities generated by the sequential neural network.
+
+The Assessment is done according the given instruction to modify the already existing neural network model. Following modification has been done and the results are evaluated accordingly. The model built using the 32 units generate the output of different accuracy and model with units 64 generate the output of different categories.
+
+As we increased the number of units and layers the input processing time is changed and generates a different output.
