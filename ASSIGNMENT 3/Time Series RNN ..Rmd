@@ -1,0 +1,355 @@
+---
+title: "Time Series RNN model"
+output: html_document
+---
+
+# Introduction
+
+Preprocessing is frequently required before using time-series data with an RNN. This might entail processing missing numbers, scaling the data, and organizing it into suitable time intervals.
+
+The next step is to define your RNN. This entails selecting the input shape, the number of hidden units, and the kind of RNN layer (basic RNN, LSTM, GRU, etc.). Additionally, you must choose whether to stack several RNN layers.\
+The model must be assembled once the RNN's architecture has been defined. Selecting an optimizer and a loss function are required for this.
+
+## Data Loading 
+
+```{r}
+# Specify the URL of the file you want to download
+url <- "https://s3.amazonaws.com/keras-datasets/jena_climate_2009_2016.csv.zip"
+
+# Specify the file path where you want to save the downloaded file
+destfile <- "jena_climate_2009_2016.csv.zip"
+
+# Download the file
+download.file(url, destfile)
+
+# Unzip the file
+unzip(destfile)
+
+```
+
+```{r}
+data <- read.csv("jena_climate_2009_2016.csv", header = TRUE)
+
+head(data)
+
+```
+
+## Data Preprocessing
+
+Convert the \"Date Time\" column to a `POSIXct` object, which represents the date and time:
+
+```{r}
+data1 <- data[315733:420451, ]
+
+data1$Date.Time <- as.POSIXct(data1$Date.Time, format = "%d.%m.%Y %H:%M:%S")
+
+```
+
+Create a time series plot using the `plot()` function. For example, to plot temperature (\"T (degC)\") over time
+
+# Time Series Plots
+
+```{r}
+# ploting time series graph
+
+plot(data1$Date.Time, data1$T..degC., type = "l", xlab = "Date Time", ylab = "Temperature (°C)")
+
+```
+
+Now the data is subset to 2015 year to see the temperature change on 2015
+
+```{r}
+# Convert the date time column to a date time object
+data1$Date.Time <- dmy_hms(data1$Date.Time)
+
+# Create a new column with only the year
+data1$year <- year(data1$Date.Time)
+
+library(dplyr)
+
+data_2014 <- data1 %>%
+  filter(year==2015)
+
+# Plot the time series
+plot(data_2014$Date.Time, data_2014$T..degC., type = "l", xlab = "2015", ylab = "Temperature (°C)")
+
+
+```
+
+# Data Preparation
+
+With the help of this code, the data will be ready for a standard machine learning workflow, in which a model will first be trained on a subset of the data and then adjusted and assessed on other, non-overlapping subsets to guarantee an accurate assessment of the model's performance.
+
+The training set comprises 50% of the total data , the validation set comprises 25%, and the remaining 25% of the data is used for the test set . This is a common split ratio in machine learning, but the exact percentages can vary depending on the specific use case and the amount of data available.
+
+```{r}
+# data splitting for model building
+set.seed(123)  # for reproducibility
+
+# Get the total number of rows in the data frame
+total_rows <- nrow(data1)
+
+# Calculate the number of samples for each split
+num_train_samples <- total_rows * 0.5
+num_val_samples <- total_rows * 0.25
+num_test_samples <- total_rows * 0.25
+
+# Generate a random sample of row indices for the training set
+train_indices <- sample(1:total_rows, size = num_train_samples)
+
+# Exclude the training indices to get the remaining data
+remaining_data <- data[-train_indices, ]
+
+# Generate a random sample of row indices for the validation set from the remaining data
+val_indices <- sample(1:nrow(remaining_data), size = num_val_samples)
+
+# The rest of the data is the test set
+test_indices <- setdiff(1:nrow(remaining_data), val_indices)
+
+# Create the data splits
+train_data <- data[train_indices, ]
+val_data <- remaining_data[val_indices, ]
+test_data <- remaining_data[test_indices, ]
+
+```
+
+## Data Normalization
+
+It involves taking a dataset (called raw_data) and normalizing it by dividing it by the standard deviation and removing the mean, which are calculated from the training samples. In order to provide the features zero mean and unit variance, a typical preprocessing step in machine learning is called normalizing. This can aid certain models in learning more efficiently.
+
+```{r}
+# Data normalization
+# Identify the numeric columns
+numeric_cols <- sapply(train_data, is.numeric)
+
+# Calculate the column means and standard deviations of the numeric columns
+means <- colMeans(train_data[, numeric_cols], na.rm = TRUE)
+stds <- apply(train_data[, numeric_cols], 2, sd, na.rm = TRUE)
+
+# Normalize the numeric columns
+train_data_normalized <- train_data
+train_data_normalized[, numeric_cols] <- scale(train_data[, numeric_cols], center = means, scale = stds)
+```
+
+It\'s important to calculate the means and standard deviations from the training data only, and then use these values to normalize the validation and test data as well. This is to ensure that the model is not exposed to any information from the validation or test data during training.
+
+```{r}
+# Define parameters
+sequence_length <- 100
+delay <- sequence_length + 24 - 1
+
+# Function to create sequences
+create_sequences <- function(data, sequence_length, delay) {
+  sequences <- list()
+  targets <- vector()
+  
+  for (i in 1:(nrow(data) - sequence_length - delay + 1)) {
+    sequences[[i]] <- data[i:(i + sequence_length - 1), ]
+    targets[i] <- data[i + sequence_length + delay - 1, "T..degC."]
+  }
+  
+  list(sequences = sequences, targets = targets)
+}
+
+# Create sequences for training, validation, and test data
+train_sequences <- create_sequences(train_data_normalized, sequence_length, delay)
+val_sequences <- create_sequences(val_data, sequence_length, delay)
+test_sequences <- create_sequences(test_data, sequence_length, delay)
+
+
+# Inspect the structure of the first sequence and target in the training data
+str(train_sequences$sequences[[1]])
+str(train_sequences$targets[1])
+
+```
+
+Lists of sequences for the test, validation, and training data will be produced by this script. The temperature delay timesteps after the end of each sequence represent the appropriate goal, and each sequence is a subset of the data of length sequence_length.
+
+```{r}
+# Common sense baseline
+# Function to calculate Mean Absolute Error (MAE)
+mae <- function(actual, predicted) {
+  mean(abs(actual - predicted))
+}
+
+# Common-sense prediction: next temperature is the same as the current temperature
+train_preds <- train_data_normalized[-1, "T..degC."]
+train_targets <- train_data_normalized[-(nrow(train_data_normalized)), "T..degC."]
+
+val_preds <- val_data[-1,"T..degC."]
+val_targets <- val_data[-(nrow(val_data)), "T..degC."]
+
+test_preds <- test_data[-1, "T..degC."]
+test_targets <- test_data[-(nrow(test_data)), "T..degC."]
+
+# Calculate MAE
+train_mae <- mae(train_targets, train_preds)
+val_mae <- mae(val_targets, val_preds)
+test_mae <- mae(test_targets, test_preds)
+
+print(paste("Training MAE:", round(train_mae, 2)))
+print(paste("Validation MAE:", round(val_mae, 2)))
+print(paste("Test MAE:", round(test_mae, 2)))
+
+```
+
+The mean absolute error (MAE) for the test, validation, and training sets is the result that you are currently seeing. How closely the model's predictions match the actual values is gauged by the MAE. The average absolute difference between the actual and anticipated values is used to compute it. Below is the meaning of each line:
+
+-   "Training MAE: 1.14" indicates that, on average, the model's predictions on the training set deviate from the real values by 1.14 units.
+
+-   "Validation MAE: 9.41" indicates that the model's average deviation from real values on the validation set is 9.41 units.
+
+-   "Test MAE: 0.19" indicates that, on average, the test set predictions made by the model deviate from the real values by around 0.19 units.
+
+    It's beneficial if your model's predictions match actual values, as shown by a low MAE. On the other hand, if the MAE is large, it suggests that your model isn't working properly since its predictions are wildly off from the real values. In this situation, you might want to think about changing the model type or modifying the parameters of your current model.
+
+```{r}
+# Load the keras library
+library(keras)
+
+# Define parameters
+sequence_length <- 100
+num_features <- ncol(train_data_normalized)
+
+# Define the model
+model <- keras_model_sequential() %>%
+  # Start with a 1D Convolutional layer
+  layer_conv_1d(filters = 32, kernel_size = 5, activation = "relu", input_shape = c(sequence_length, num_features)) %>%
+  layer_max_pooling_1d(pool_size = 2) %>%
+  # Add LSTM layers
+  layer_lstm(units = 32, return_sequences = TRUE) %>%
+  layer_lstm(units = 16, return_sequences = FALSE) %>%
+  # Output layer
+  layer_dense(units = 1)
+
+
+```
+
+Using the R Keras package, this code constructs a sequential model for time series prediction. The number of columns in the normalized training data determines how many features the model can handle, and it can handle data sequences up to 100 characters long.\
+The first layer of the model architecture is a 1D convolutional layer, which is particularly useful for extracting features from fixed-length segments of the whole dataset when the feature's location within the chunk is not as crucial. With a kernel size of 5, five input features impact each output feature. After that, the model performs a max pooling procedure to lower the input's dimensionality and aid in preventing overfitting.
+
+The model consists of two LSTM (Long Short-Term Memory) layers after the convolutional layer. Time series prediction tasks are a good fit for recurrent neural network (RNN) layers, specifically long-term dependency learning (LSTM) layers. At each time step, the first LSTM layer produces its hidden state, or sequences, which are then used as input by the subsequent LSTM layer. The second LSTM layer only outputs its hidden state at the last time step, which is then utilized as input for the dense layer. It does not return sequences.
+
+The model's final output layer, which consists of a single unit and is densely coupled, will provide the anticipated result. The model is constructed using the mean squared error loss function and the "rmsprop" optimizer, which are both often used for regression issues. After that, the model is prepared for training using the training set and evaluation using the validation and test sets.
+
+```{r}
+# Compile the model
+model %>% compile(
+  optimizer = optimizer_rmsprop(),
+  loss = "mse",
+  metrics = c("mae")
+)
+```
+
+```{r}
+# Prepare the data for training
+x_train <- array_reshape(train_sequences$sequences, dim = c(length(train_sequences$sequences), sequence_length, num_features))
+y_train <- unlist(train_sequences$targets)
+
+# Train the model
+history <- model %>% fit(
+  x = x_train,
+  y = y_train,
+  epochs = 10,
+  batch_size = 250,
+  validation_split = 0.2
+)
+
+print(history)
+```
+
+```{r}
+# Evaluate the model
+x_test <- array_reshape(test_sequences$sequences, dim = c(length(test_sequences$sequences), sequence_length, num_features))
+y_test <- unlist(test_sequences$targets)
+test_mae <- model %>% evaluate(x_test, y_test, metrics = c("mae"))
+print(paste("Test MAE:", round(test_mae, 2)))
+
+```
+
+## Prediction
+
+```{r}
+# Generate predictions on the test data
+test_preds <- model %>% predict(x_test)
+
+# Calculate the Mean Absolute Error (MAE) on the test data
+test_mae <- mean(abs(test_preds - y_test))
+print(paste("Test MAE:", round(test_mae, 2)))
+
+# If you want to inspect the first few predictions
+print(head(test_preds))
+
+```
+
+## 1D Convents and RNN
+
+```{r}
+
+# Define the model
+model_1d <- keras_model_sequential() %>%
+  # Start with a 1D Convolutional layer
+  layer_conv_1d(filters = 32, kernel_size = 5, activation = "relu", input_shape = c(sequence_length, num_features)) %>%
+  layer_max_pooling_1d(pool_size = 2) %>%
+  # Add LSTM layers
+  layer_lstm(units = 32, return_sequences = TRUE) %>%
+  layer_lstm(units = 16, return_sequences = FALSE) %>%
+  # Output layer
+  layer_dense(units = 1)
+
+# Compile the model
+model_1d %>% compile(
+  optimizer = optimizer_rmsprop(),
+  loss = "mse",
+  metrics = c("mae")
+)
+
+```
+
+## 
+
+```{r}
+
+# Train the model
+history_1d <- model_1d %>% fit(
+  x = x_train,
+  y = y_train,
+  epochs = 10,
+  batch_size = 250,
+  validation_split = 0.2
+)
+print(history_1d)
+```
+
+## Results Visualization
+
+```{r}
+# Load the necessary libraries
+library(ggplot2)
+
+# Convert the training history to a data frame
+history_df <- as.data.frame(history)
+
+# Plot the training and validation loss
+ggplot(history_df, aes(x = 1:nrow(history_df))) +
+  geom_line(aes(y = loss, color = "Training")) +
+  geom_line(aes(y = val_loss, color = "Validation")) +
+  labs(x = "Epoch", y = "Loss", color = "Dataset") +
+  theme_minimal()
+```
+
+```{r}
+# Convert the predictions and actual values to a data frame
+preds_df <- data.frame(Time = 1:length(y_test), Actual = y_test, Predicted = test_preds)
+
+# Plot the actual vs. predicted values
+ggplot(preds_df, aes(x = Time)) +
+  geom_line(aes(y = Actual, color = "Actual")) +
+  geom_line(aes(y = Predicted, color = "Predicted")) +
+  labs(x = "Time", y = "Temperature", color = "Line") +
+  theme_minimal()
+```
+
+# Summary
+
+Recurrent Neural Networks (RNNs) are a type of artificial neural network designed to recognize patterns in sequences of data, such as text, genomes, handwriting, or the spoken word. Unlike traditional neural networks which process independent inputs, RNNs can use their internal state (memory) to process sequences of inputs. This makes them ideal for tasks where the order of the data matters, such as time series prediction, natural language processing, and speech recognition.
