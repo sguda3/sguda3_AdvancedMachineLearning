@@ -1,0 +1,212 @@
+---
+title: "Text and Sequence Data Assignment"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Loading Libarary and Data
+
+```{r}
+library(keras)
+library(tensorflow)
+library(ggplot2)
+```
+
+## Loading the IMDB Text data:
+
+```{r}
+imdb <- dataset_imdb(num_words = 10000)
+
+```
+
+Data is loaded by containing the top 10000 words of the sample data.
+
+```{r}
+train_data <- imdb$train$x
+train_labels <- imdb$train$y
+#loading test data for validation
+test_data <- imdb$test$x
+test_labels <- imdb$test$y
+```
+
+# Data Preprocessing
+
+Now from the training and Testing/validating data we need to cuttoff the reviews after 150 words.
+
+```{r}
+#limiting the training data upto 150 reviews
+train_data <- pad_sequences(train_data, maxlen = 150)
+```
+
+```{r}
+# Preprocess the test data
+test_data <- pad_sequences(test_data, maxlen = 150)
+```
+
+Restricting the training to 100
+
+```{r}
+#restricting training samples to 100
+train_data <- train_data[1:100, ]
+train_labels <- train_labels[1:100]
+```
+
+Preparing the Validation data for 10000 samples to evaluate the model.
+
+```{r}
+# Limit the number of validation samples to 10000
+val_data <- test_data[1:10000, ]
+val_labels <- test_labels[1:10000]
+```
+
+# Model Building
+
+## Using Embedding layer
+
+The embedding layer learns the word embeddings as part of the overall model training process. It starts with random word embeddings and then adjusts these embeddings to minimize the loss function of the model.
+
+```{r}
+#building the model
+model <- keras_model_sequential() %>%
+  layer_embedding(input_dim = 10000, output_dim = 32) %>%
+  layer_simple_rnn(units = 32) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+```
+
+```{r}
+model %>% compile(
+  optimizer = "rmsprop",
+  loss = "binary_crossentropy",
+  metrics = c("accuracy")
+)
+
+```
+
+Now fitting the model using training data and label and validating the model using validation data.
+
+```{r}
+# Train the model
+history <- model %>% fit(
+  train_data,
+  train_labels,
+  epochs = 10,
+  batch_size = 512,
+  validation_data = list(val_data, val_labels)
+)
+
+```
+
+![](Epoch%20plot.png)
+
+```{r}
+# Get the validation accuracy of the last epoch
+val_accs <- history$metrics$val_accuracy[length(history$metrics$val_accuracy)]
+
+# Print the validation accuracies
+print(val_accs)
+
+```
+
+The accuracy of the last epoch is 0.5423.
+
+Recurrent Neural Network (RNN) model correctly predicted the class of approximately 54.23% of the validation samples.
+
+## Changing the number of Samples for Embedding Layer:
+
+```{r}
+# Define the number of training samples to test
+num_samples <- c(20, 50, 60, 70, 100)
+
+# Initialize a vector to store the validation accuracies
+val_acc <- numeric(length(num_samples))
+
+```
+
+Now the for is iterating the model over different samples and produce the results after validating over 10000 samples
+
+```{r}
+# Loop over the number of training samples
+for (i in seq_along(num_samples)) {
+  # Check if the number of samples is less than or equal to the total number of samples
+  if (num_samples[i] <= length(train_data)) {
+    # Limit the number of training samples
+    train_data_subset <- train_data[1:num_samples[i], ]
+    train_labels_subset <- train_labels[1:num_samples[i]]
+    
+    # Define the model
+    model <- keras_model_sequential() %>%
+      layer_embedding(input_dim = 10000, output_dim = 32) %>%
+      layer_simple_rnn(units = 32) %>%
+      layer_dense(units = 1, activation = "sigmoid")
+    
+    # Compile the model
+    model %>% compile(
+      optimizer = "rmsprop",
+      loss = "binary_crossentropy",
+      metrics = c("accuracy")
+    )
+    
+    # Train the model
+    history <- model %>% fit(
+      train_data_subset,
+      train_labels_subset,
+      epochs = 10,
+      batch_size = 512,
+      validation_data = list(val_data, val_labels)
+    )
+    
+    # Get the validation accuracy of the last epoch
+    val_acc[i] <- history$metrics$val_accuracy[length(history$metrics$val_accuracy)]
+  } else {
+    print(paste("Skipping", num_samples[i], "because it's greater than the total number of samples"))
+  }
+}
+
+
+```
+
+![When Sample number are 20](20%20sample.png)
+
+![When Samples number are 50](40%20sample%20epoch.png)
+
+![At 60 number of Samples](60.png)
+
+![At 70 number of Samples](70.png)
+
+![At 100 number of Samples](100.png)
+
+Printing the last epoch accuracy of eac number of samples
+
+```{r}
+
+
+print(val_acc)
+```
+
+### Plotting the last epoch accuracy of each number of sample:
+
+```{r}
+
+# Create a data frame with the results
+results <- data.frame(
+  num_samples = num_samples,
+  val_acc = val_acc
+)
+
+# Plot the results
+ggplot(results, aes(x = num_samples, y = val_acc)) +
+  geom_point() +
+  geom_line() +
+  labs(x = "Number of Training Samples", y = "Validation Accuracy", title = "Model Performance") +
+  theme_minimal()
+
+```
+
+After looking at the above graph we can interpret that Embedding layer works better when the number of training samples are 60.
+
+## Conclusion:
+
+The amount of training data utilized determined how well the model performed. The validation accuracy reached its maximum at about sixty training sample counts. This implies that the model was able to make good learning progress with this volume of data. The model's validation accuracy was around 54.23%. This suggests that when it came to generating predictions on the validation data the model was right somewhat more than half the time.
+
+Due to the restrictions in R deep learning packages, it was not possible t compare a model utilizing an embedding layer with a model with a model using pre-trained embedding (such as GloVe or Word2Ves). However, because pretrained embeddings make use of information gleaned from vast quantities of data, it is well recognized that they frequently enhance performance, particularly in situation when the amount of training data is constrained. Although the model was able to learn from the training data to some extent, the accuracy indicates that there is still a great deal of space for improvement.
